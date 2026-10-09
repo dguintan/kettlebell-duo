@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed(){return request.auth != null;}
+  function home(h){return get(/databases/$(database)/documents/duoHomes/$(h)).data;}
+  function member(h){return signed() && (home(h).owner == request.auth.uid || home(h).partner == request.auth.uid);}
+  function role(h){return home(h).owner == request.auth.uid ? 'me' : 'wife';}
+  function afterMember(h){let d=getAfter(/databases/$(database)/documents/duoHomes/$(h)).data;return signed() && (d.owner==request.auth.uid || d.partner==request.auth.uid);}
+  match /duoUsers/{uid} {
+   allow read: if signed() && request.auth.uid==uid;
+   allow create: if signed() && request.auth.uid==uid && request.resource.data.keys().hasOnly(['home','role']) && afterMember(request.resource.data.home) && ((request.resource.data.role=='me' && getAfter(/databases/$(database)/documents/duoHomes/$(request.resource.data.home)).data.owner==uid) || (request.resource.data.role=='wife' && getAfter(/databases/$(database)/documents/duoHomes/$(request.resource.data.home)).data.partner==uid));
+   allow update,delete: if false;
+  }
+  match /duoInvites/{code} {
+   allow get: if signed();
+   allow list: if false;
+   allow create: if signed() && code.matches('^[a-f0-9]{32}$') && request.resource.data.keys().hasOnly(['home','owner','expiresAt']) && request.resource.data.owner==request.auth.uid && getAfter(/databases/$(database)/documents/duoHomes/$(request.resource.data.home)).data.owner==request.auth.uid && request.resource.data.expiresAt is number && request.resource.data.expiresAt>request.time.toMillis() && request.resource.data.expiresAt<=request.time.toMillis()+604800000;
+   allow update,delete: if false;
+  }
+  match /duoHomes/{h} {
+   allow read: if member(h);
+   allow create: if signed() && request.resource.data.keys().hasOnly(['owner','partner','joinProof','invite','createdAt']) && request.resource.data.owner==request.auth.uid && request.resource.data.partner==null && request.resource.data.joinProof==null && request.resource.data.invite.matches('^[a-f0-9]{32}$') && !exists(/databases/$(database)/documents/duoUsers/$(request.auth.uid));
+   allow update: if signed() && (
+    (resource.data.owner==request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invite']) && request.resource.data.invite.matches('^[a-f0-9]{32}$')) ||
+    (resource.data.partner==null && request.auth.uid!=resource.data.owner && request.resource.data.partner==request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['partner','joinProof']) && request.resource.data.joinProof==resource.data.invite && !exists(/databases/$(database)/documents/duoUsers/$(request.auth.uid)) && get(/databases/$(database)/documents/duoInvites/$(resource.data.invite)).data.home==h && get(/databases/$(database)/documents/duoInvites/$(resource.data.invite)).data.expiresAt>request.time.toMillis())
+   );
+   allow delete: if false;
+   match /profiles/{p} {
+    allow read: if member(h);
+    allow create: if afterMember(h) && getAfter(/databases/$(database)/documents/duoHomes/$(h)).data.owner==request.auth.uid && p in ['me','wife'];
+    allow update: if member(h) && p==role(h) && request.resource.data.keys().hasOnly(['name','mode','loaded','age','height','weight','waist','weeklyGoal']) && request.resource.data.name is string && request.resource.data.name.size()<=30 && request.resource.data.mode in ['start','build','steady'] && request.resource.data.loaded is bool && (!('weeklyGoal' in request.resource.data) || (request.resource.data.weeklyGoal is int && request.resource.data.weeklyGoal>=1 && request.resource.data.weeklyGoal<=7));
+    allow delete: if false;
+   }
+   match /records/{r} {
+    allow read: if member(h);
+    allow create,update: if member(h) && request.resource.data.uid==request.auth.uid && request.resource.data.person==role(h) && request.resource.data.keys().hasOnly(['uid','person','date','startedAt','endedAt','seconds','type','mode','effort','note','status','exercises']) && request.resource.data.seconds is number && request.resource.data.seconds>=0 && request.resource.data.seconds<=86400 && request.resource.data.endedAt is number && request.resource.data.date is string && request.resource.data.type in ['strength','walk'] && request.resource.data.status in ['complete','partial'] && request.resource.data.note is string && request.resource.data.note.size()<=500 && request.resource.data.effort is number && request.resource.data.effort>=0 && request.resource.data.effort<=10 && (!exists(/databases/$(database)/documents/duoHomes/$(h)/records/$(r)) || resource.data.uid==request.auth.uid);
+    allow delete: if member(h) && resource.data.uid==request.auth.uid;
+   }
+   match /cheers/{c} {
+    allow read: if member(h);
+    allow create: if member(h) && request.resource.data.keys().hasOnly(['uid','person','text','createdAt']) && request.resource.data.uid==request.auth.uid && request.resource.data.person==role(h) && request.resource.data.text in ['今天有動就很棒！','一起慢慢來，我支持你。','謝謝你陪我建立習慣。'] && request.resource.data.createdAt is number;
+    allow update,delete: if false;
+   }
+   match /measurements/{m} {
+    allow read: if member(h);
+    allow create,update: if member(h) && request.resource.data.keys().hasOnly(['uid','person','date','weight','waist','bodyFat','createdAt']) && request.resource.data.uid==request.auth.uid && request.resource.data.person==role(h) && (request.resource.data.weight==null || (request.resource.data.weight is number && request.resource.data.weight>=20 && request.resource.data.weight<=300)) && (request.resource.data.waist==null || (request.resource.data.waist is number && request.resource.data.waist>=30 && request.resource.data.waist<=250)) && (request.resource.data.bodyFat==null || (request.resource.data.bodyFat is number && request.resource.data.bodyFat>0 && request.resource.data.bodyFat<70)) && (request.resource.data.weight!=null || request.resource.data.waist!=null || request.resource.data.bodyFat!=null) && request.resource.data.date is string && request.resource.data.createdAt is number && (!exists(/databases/$(database)/documents/duoHomes/$(h)/measurements/$(m)) || resource.data.uid==request.auth.uid);
+    allow delete: if member(h) && resource.data.uid==request.auth.uid;
+   }
+  }
+ }
+}

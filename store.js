@@ -1,0 +1,3 @@
+const opened = new Promise((resolve,reject)=>{const r=indexedDB.open('duo-training',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+export async function read(key,fallback=null){const db=await opened;return new Promise((resolve,reject)=>{const r=db.transaction('kv').objectStore('kv').get(key);r.onsuccess=()=>resolve(r.result??fallback);r.onerror=()=>reject(r.error);});}
+export async function write(key,value){const db=await opened;return new Promise((resolve,reject)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(value,key);t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);});}
